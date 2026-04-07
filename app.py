@@ -1,15 +1,72 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import hashlib
+import json
+import os
 import io
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="Claim Auditor - RSPAD",
+    page_title="MediGuard Claim Auditor - RSPAD",
     page_icon="🏥",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# --- SISTEM AUTENTIKASI ---
+USER_DB_FILE = "users.json"
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def load_users():
+    """Load user database dari file JSON. Buat default superadmin jika belum ada."""
+    if os.path.exists(USER_DB_FILE):
+        with open(USER_DB_FILE, "r") as f:
+            return json.load(f)
+    # Default users
+    default_users = {
+        "superadmin": {
+            "password": hash_password("admin123"),
+            "role": "superadmin",
+            "nama": "Super Administrator"
+        },
+        "admin": {
+            "password": hash_password("admin123"),
+            "role": "admin",
+            "nama": "Administrator"
+        },
+        "user": {
+            "password": hash_password("user123"),
+            "role": "user",
+            "nama": "User Biasa"
+        }
+    }
+    save_users(default_users)
+    return default_users
+
+def save_users(users):
+    with open(USER_DB_FILE, "w") as f:
+        json.dump(users, f, indent=2)
+
+def authenticate(username, password):
+    users = load_users()
+    if username in users and users[username]["password"] == hash_password(password):
+        return users[username]
+    return None
+
+# Inisialisasi session state
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "user_nama" not in st.session_state:
+    st.session_state.user_nama = None
+if "active_page" not in st.session_state:
+    st.session_state.active_page = "dashboard"
 
 # --- CUSTOM CSS (TAMPILAN CARD UI MODERN) ---
 st.markdown("""
@@ -40,8 +97,143 @@ st.markdown("""
     /* Custom Badge */
     .badge-red { background: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
     .badge-green { background: #dcfce7; color: #166534; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 700; }
+
+    /* Login Form */
+    .login-container {
+        max-width: 420px;
+        margin: 60px auto;
+        background: white;
+        border-radius: 20px;
+        padding: 40px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid #e5e7eb;
+    }
+    .login-title { font-size: 24px; font-weight: 800; color: #111827; text-align: center; margin-bottom: 8px; }
+    .login-subtitle { font-size: 14px; color: #6b7280; text-align: center; margin-bottom: 24px; }
+
+    /* Role Badge */
+    .role-superadmin { background: #fef3c7; color: #92400e; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .role-admin { background: #dbeafe; color: #1e40af; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .role-user { background: #e5e7eb; color: #374151; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
 </style>
 """, unsafe_allow_html=True)
+
+# --- HALAMAN LOGIN ---
+def show_login_page():
+    st.markdown("""
+    <div class="login-container">
+        <div class="login-title">🏥 MediGuard</div>
+        <div class="login-subtitle">Claim Auditor System — RSPAD Gatot Soebroto</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_space1, col_form, col_space2 = st.columns([1, 1.5, 1])
+    with col_form:
+        with st.form("login_form"):
+            st.markdown("##### Masuk ke Akun Anda")
+            username = st.text_input("Username", placeholder="Masukkan username")
+            password = st.text_input("Password", type="password", placeholder="Masukkan password")
+            submitted = st.form_submit_button("Login", use_container_width=True)
+
+            if submitted:
+                if not username or not password:
+                    st.error("Username dan password harus diisi!")
+                else:
+                    user_data = authenticate(username, password)
+                    if user_data:
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.user_role = user_data["role"]
+                        st.session_state.user_nama = user_data["nama"]
+                        st.session_state.active_page = "dashboard"
+                        st.rerun()
+                    else:
+                        st.error("Username atau password salah!")
+
+        st.markdown("""
+        <div style="text-align:center; color:#9ca3af; font-size:12px; margin-top:16px;">
+            Default Superadmin: <b>superadmin</b> / <b>admin123</b>
+        </div>
+        """, unsafe_allow_html=True)
+
+# --- HALAMAN ADMIN PANEL (SUPERADMIN ONLY) ---
+def show_admin_panel():
+    st.markdown("### ⚙️ Admin Panel — Manajemen User")
+    st.markdown("---")
+
+    users = load_users()
+
+    # Tabel User
+    st.markdown("#### 👥 Daftar User")
+    user_data_list = []
+    for uname, udata in users.items():
+        user_data_list.append({
+            "Username": uname,
+            "Nama": udata["nama"],
+            "Role": udata["role"],
+        })
+    st.dataframe(pd.DataFrame(user_data_list), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # Tambah User Baru
+    st.markdown("#### ➕ Tambah User Baru")
+    with st.form("add_user_form"):
+        col1, col2 = st.columns(2)
+        new_username = col1.text_input("Username Baru")
+        new_nama = col2.text_input("Nama Lengkap")
+        col3, col4 = st.columns(2)
+        new_password = col3.text_input("Password", type="password")
+        new_role = col4.selectbox("Role", ["user", "admin", "superadmin"])
+        add_submitted = st.form_submit_button("Tambah User", use_container_width=True)
+
+        if add_submitted:
+            if not new_username or not new_password or not new_nama:
+                st.error("Semua field harus diisi!")
+            elif new_username in users:
+                st.error(f"Username '{new_username}' sudah ada!")
+            else:
+                users[new_username] = {
+                    "password": hash_password(new_password),
+                    "role": new_role,
+                    "nama": new_nama
+                }
+                save_users(users)
+                st.success(f"User '{new_username}' berhasil ditambahkan!")
+                st.rerun()
+
+    st.markdown("---")
+
+    # Hapus User
+    st.markdown("#### 🗑️ Hapus User")
+    deletable_users = [u for u in users.keys() if u != st.session_state.username]
+    if deletable_users:
+        with st.form("delete_user_form"):
+            del_user = st.selectbox("Pilih User untuk Dihapus", deletable_users)
+            del_submitted = st.form_submit_button("Hapus User", use_container_width=True)
+            if del_submitted:
+                del users[del_user]
+                save_users(users)
+                st.success(f"User '{del_user}' berhasil dihapus!")
+                st.rerun()
+    else:
+        st.info("Tidak ada user lain yang bisa dihapus.")
+
+    st.markdown("---")
+
+    # Reset Password
+    st.markdown("#### 🔑 Reset Password User")
+    with st.form("reset_pw_form"):
+        reset_user = st.selectbox("Pilih User", list(users.keys()))
+        reset_pw = st.text_input("Password Baru", type="password")
+        reset_submitted = st.form_submit_button("Reset Password", use_container_width=True)
+        if reset_submitted:
+            if not reset_pw:
+                st.error("Password baru harus diisi!")
+            else:
+                users[reset_user]["password"] = hash_password(reset_pw)
+                save_users(users)
+                st.success(f"Password untuk '{reset_user}' berhasil direset!")
 
 # --- LOGIKA PROGRAM (MESIN DETEKSI) ---
 def clean_currency(x):
@@ -115,10 +307,56 @@ def process_data(file_ri, file_rj):
 
 # --- LAYOUT UI ---
 
+# Cek Autentikasi: Tampilkan login jika belum login
+if not st.session_state.authenticated:
+    show_login_page()
+    st.stop()
+
+# --- SIDEBAR (SETELAH LOGIN) ---
+with st.sidebar:
+    role_class = f"role-{st.session_state.user_role}"
+    st.markdown(f"""
+    <div style="padding: 16px 0;">
+        <div style="font-weight: 700; font-size: 16px;">👤 {st.session_state.user_nama}</div>
+        <div style="margin-top: 4px;">
+            <span class="{role_class}">{st.session_state.user_role}</span>
+        </div>
+        <div style="font-size: 12px; color: #9ca3af; margin-top: 4px;">@{st.session_state.username}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("##### Menu")
+
+    if st.button("📊 Dashboard Audit", use_container_width=True):
+        st.session_state.active_page = "dashboard"
+        st.rerun()
+
+    if st.session_state.user_role == "superadmin":
+        if st.button("⚙️ Admin Panel", use_container_width=True):
+            st.session_state.active_page = "admin"
+            st.rerun()
+
+    st.markdown("---")
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.session_state.user_role = None
+        st.session_state.user_nama = None
+        st.session_state.active_page = "dashboard"
+        st.rerun()
+
+# --- ROUTING HALAMAN ---
+if st.session_state.active_page == "admin" and st.session_state.user_role == "superadmin":
+    show_admin_panel()
+    st.stop()
+
+# --- HALAMAN DASHBOARD (DEFAULT) ---
+
 # Header Section
 c1, c2 = st.columns([8, 2])
 with c1:
-    st.markdown("### 🏥 Claim Auditor System")
+    st.markdown("### 🏥 MediGuard Claim Auditor")
     st.markdown("**RSPAD Gatot Soebroto** • Internal Audit Dashboard")
 with c2:
     st.markdown('<div style="text-align: right; color: #6b7280; font-size: 12px; margin-top: 5px;">v2.0 Pro Edition</div>', unsafe_allow_html=True)
